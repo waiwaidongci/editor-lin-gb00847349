@@ -3,13 +3,13 @@ import logging
 
 from sqlalchemy import select
 
-from app.analysis.contracts import RunStatus
-from app.analysis.models import AnalysisRun
+from app.analysis.contracts import RunOptions, RunStatus, replay_view
+from app.analysis.models import AnalysisRun, RunReplay
 from app.clock import now_utc
 from app.data.repository import observation_query
 from app.database import Session
 from app.ops.audit import audit
-from domain.spec import OPTIONS_MODEL, ROW_MODEL, analyze
+from domain.spec import analyze, validated_editors
 
 
 def validate_result(result):
@@ -32,9 +32,18 @@ def run_next() -> bool:
         if run is None:
             return False
         try:
-            rows = [ROW_MODEL.model_validate(item) for item in db.scalars(observation_query(run.dataset_id))]
-            options = OPTIONS_MODEL.model_validate(run.options)
-            run.result = validate_result(analyze(rows, options))
+            replay = db.get(RunReplay, run.id)
+            dataset_id = replay.snapshot_dataset_id if replay is not None else run.dataset_id
+            rows = validated_editors(list(db.scalars(observation_query(dataset_id))))
+            options = RunOptions.model_validate(run.options or {})
+            result = analyze(rows, options.domain_options())
+            if replay is not None:
+                manifest = replay_view(run, replay)
+                result['replay'] = manifest
+                result['adopted_revisions'] = manifest['adopted_revisions']
+                result['selected_revisions'] = manifest['adopted_revisions']
+                result['revisions'] = manifest['adopted_revisions']
+            run.result = validate_result(result)
             run.status = RunStatus.completed
         except ValueError as exc:
             run.status = RunStatus.failed

@@ -2,8 +2,8 @@ import csv
 from io import StringIO
 import json
 
-from app.analysis.contracts import Decision, describe_review
-from app.analysis.models import Review
+from app.analysis.contracts import Decision, describe_review, replay_view
+from app.analysis.models import Review, RunReplay
 from app.data.repository import get_dataset
 from app.errors import Problem
 from domain.spec import METHOD, TITLE
@@ -13,11 +13,14 @@ def approved_report(db, run):
     review = db.get(Review, run.id)
     if review is None or review.decision != Decision.approved:
         raise Problem(409, 'report_not_approved', 'A reviewer must approve the analysis')
-    dataset = get_dataset(db, run.dataset_id)
+    replay = db.get(RunReplay, run.id)
+    dataset_id = replay.snapshot_dataset_id if replay is not None else run.dataset_id
+    dataset = get_dataset(db, dataset_id)
     return {'run_id': run.id, 'project': TITLE, 'method': METHOD,
             'dataset': {'id': dataset.id, 'name': dataset.name, 'checksum': dataset.checksum,
                         'row_count': dataset.row_count},
-            'options': run.options, 'result': run.result, 'review': describe_review(review)}
+            'options': run.options, 'result': run.result, 'review': describe_review(review),
+            'replay': replay_view(run, replay)}
 
 
 def csv_value(value):

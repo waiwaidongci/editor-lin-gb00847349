@@ -7,6 +7,9 @@ from .cohort.models import EditorRow, ExperimentOptions
 from .cohort.snapshot import RowInput, build_snapshot, record_key, validate_rows, validated_editors
 from .reporting.demo import SEED_NAME, seed
 from .reporting.report import build_report
+from .revisions import replay_revisions, select_revisions
+
+replay = replay_revisions
 
 TITLE = "学术期刊编辑任务栏实验"
 METHOD = "editor-lin-hc3"
@@ -14,7 +17,8 @@ ROW_MODEL = EditorRow
 OPTIONS_MODEL = ExperimentOptions
 
 __all__ = ["TITLE", "METHOD", "SEED_NAME", "ROW_MODEL", "OPTIONS_MODEL",
-           "record_key", "validate_rows", "analyze", "seed"]
+           "record_key", "validate_rows", "analyze", "seed",
+           "replay", "replay_revisions", "select_revisions"]
 
 
 def analyze(

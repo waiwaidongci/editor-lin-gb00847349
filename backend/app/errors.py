@@ -14,6 +14,10 @@ class Problem(Exception):
 async def problem_handler(request: Request, exc: Problem):
     return JSONResponse(status_code=exc.status, content={
         'error': {'code': exc.code, 'detail': exc.detail},
+        'code': exc.code,
+        'detail': exc.detail,
+        'accepted': False,
+        'status': 'rejected',
         'request_id': getattr(request.state, 'request_id', None),
     })
 

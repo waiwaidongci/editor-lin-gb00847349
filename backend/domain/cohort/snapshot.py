@@ -20,7 +20,13 @@ def validated_editors(rows: Iterable[RowInput]) -> list[EditorRow]:
     editors = {}
     for number, row in enumerate(rows, start=1):
         try:
-            editor = EditorRow.model_validate(row)
+            validation_input = row
+            if isinstance(row, Mapping):
+                # Allow callers to pass revision envelopes straight through to
+                # analyze(); replay_revisions is still the API that merges them.
+                from domain.revisions import normalize_revision
+                validation_input = normalize_revision(row, number)['data']
+            editor = EditorRow.model_validate(validation_input)
         except ValueError as exc:
             raise ValueError(f"第 {number} 条编辑分配无效：{exc}") from exc
         key = record_key(editor)

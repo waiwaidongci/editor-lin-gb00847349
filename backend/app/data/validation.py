@@ -8,9 +8,11 @@ from app.settings import settings
 from domain.spec import ROW_MODEL, record_key, validate_rows
 
 
-def normalize(rows: list[dict]) -> tuple[str, list[tuple[str, dict]]]:
-    if not 1 <= len(rows) <= settings.max_rows:
+def normalize(rows: list[dict], *, allow_empty: bool = False) -> tuple[str, list[tuple[str, dict]]]:
+    if not allow_empty and not 1 <= len(rows) <= settings.max_rows:
         raise Problem(422, 'invalid_row_count', f'Provide 1 to {settings.max_rows} observations')
+    if len(rows) > settings.max_rows:
+        raise Problem(422, 'invalid_row_count', f'At most {settings.max_rows} observations are accepted')
     validated = []
     for position, row in enumerate(rows, 1):
         try:

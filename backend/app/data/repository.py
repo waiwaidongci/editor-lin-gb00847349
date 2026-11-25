@@ -45,5 +45,27 @@ def get_dataset(db, dataset_id: int) -> Dataset:
     return dataset
 
 
+def freeze_dataset(db, name: str, rows: list[dict], actor: str, *, audit_action: str = 'dataset_frozen') -> Dataset:
+    """Find or create the immutable dataset backing a queued replay."""
+    name = name.strip()
+    if not 1 <= len(name) <= 120:
+        name = name[:120] or 'replay'
+    checksum, pairs = normalize(rows, allow_empty=True)
+    existing = db.scalar(select(Dataset).where(Dataset.name == name, Dataset.checksum == checksum))
+    if existing is not None:
+        return existing
+    dataset = Dataset(name=name, checksum=checksum, row_count=len(pairs), created_by=actor)
+    db.add(dataset)
+    db.flush()
+    if pairs:
+        db.execute(insert(Observation), [
+            {'dataset_id': dataset.id, 'record_key': sha256(key.encode()).hexdigest(), 'payload': payload}
+            for key, payload in pairs
+        ])
+    audit(db, actor, audit_action, f'dataset/{dataset.id}')
+    db.flush()
+    return dataset
+
+
 def observation_query(dataset_id: int):
     return select(Observation.payload).where(Observation.dataset_id == dataset_id).order_by(Observation.id)

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.clock import now_utc
@@ -27,3 +27,18 @@ class Review(Base):
     note: Mapped[str] = mapped_column(Text)
     reviewer: Mapped[str] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+
+
+class RunReplay(Base):
+    """Frozen revision-selection manifest for one queued analysis run."""
+
+    __tablename__ = 'run_replays'
+    run_id: Mapped[int] = mapped_column(ForeignKey('analysis_runs.id'), primary_key=True)
+    snapshot_dataset_id: Mapped[int] = mapped_column(ForeignKey('datasets.id'), index=True)
+    source_run_id: Mapped[int | None] = mapped_column(ForeignKey('analysis_runs.id'), index=True)
+    stream_key: Mapped[str] = mapped_column(String(160), index=True)
+    stream_name: Mapped[str | None] = mapped_column(String(120))
+    received_cutoff: Mapped[datetime | None] = mapped_column(DateTime)
+    cutoff_inclusive: Mapped[bool] = mapped_column(Boolean, default=True)
+    frozen_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+    adopted: Mapped[list] = mapped_column(JSON)

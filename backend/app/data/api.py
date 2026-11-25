@@ -15,7 +15,10 @@ from app.data.models import Dataset
 from app.data.repository import get_dataset, import_dataset, observation_query
 from app.database import Session
 from app.errors import Problem
+from app.intake.contracts import csv_is_revision_batch, extract_batch_payload, parse_revision_csv
+from app.intake.repository import import_revision_batch, materialize_stream_dataset
 from app.settings import settings
+from domain.revisions import RECEIVED_KEYS, REVISION_KEYS, WITHDRAWN_KEYS
 
 
 router = APIRouter(prefix='/datasets', tags=['Data intake'])
@@ -26,6 +29,59 @@ def describe(dataset):
     return {'id': dataset.id, 'name': dataset.name, 'checksum': dataset.checksum,
             'row_count': dataset.row_count, 'created_by': dataset.created_by,
             'created_at': utc_iso(dataset.created_at)}
+
+
+def _is_revision_payload(payload) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if any(key in payload for key in ('records', 'revisions')):
+        return True
+    rows = payload.get('rows')
+    if not isinstance(rows, list):
+        return False
+    special = set(REVISION_KEYS) | set(RECEIVED_KEYS) | set(WITHDRAWN_KEYS) | {
+        'withdrawn', 'status', 'op', 'operation', 'action',
+    }
+    return any(isinstance(row, dict) and any(key in special for key in row) for row in rows)
+
+
+async def _import_revisions(request: Request, response: Response, body: bytes, user,
+                            query_name: str | None):
+    media = request.headers.get('content-type', '').split(';', 1)[0].strip().lower()
+    header_key = request.headers.get('Idempotency-Key') or request.headers.get('X-Idempotency-Key')
+    if media == 'text/csv':
+        if query_name is None:
+            raise Problem(422, 'missing_name', 'Provide the CSV stream name as a query parameter')
+        name, records = query_name, parse_revision_csv(body)
+        key, default_received = header_key, None
+    else:
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            raise Problem(422, 'invalid_request', 'Provide valid JSON') from None
+        name, body_key, default_received, records = extract_batch_payload(
+            parsed, stream_name=query_name, idempotency_key=header_key,
+        )
+        key = header_key or body_key
+    if not name:
+        raise Problem(422, 'missing_name', 'Provide a dataset/stream name')
+    result = await run_in_threadpool(
+        import_revision_batch, name, records, user.email,
+        batch_key=key, default_received_at=default_received,
+    )
+    dataset, materialization_error = await run_in_threadpool(
+        materialize_stream_dataset, name, user.email,
+    )
+    if dataset is not None:
+        result.update({
+            'id': dataset.id, 'name': dataset.name, 'checksum': dataset.checksum,
+            'row_count': dataset.row_count,
+        })
+        result['current_dataset'] = describe(dataset)
+    if materialization_error:
+        result['materialization_error'] = materialization_error
+    response.status_code = 200 if not result['created'] else 201
+    return result
 
 
 async def bounded_upload(request: Request) -> bytes:
@@ -64,13 +120,21 @@ async def ingest(request: Request, response: Response, user=Depends(analyst),
         raise Problem(415, 'unsupported_media_type', 'Use application/json or text/csv')
     body = await bounded_upload(request)
     if media == 'text/csv':
+        if csv_is_revision_batch(body):
+            return await _import_revisions(request, response, body, user, name)
         if name is None:
             raise Problem(422, 'missing_name', 'Provide the CSV dataset name as a query parameter')
         records = await run_in_threadpool(parse_csv, body)
     else:
         try:
-            payload = DatasetImport.model_validate_json(body)
-        except (ValidationError, json.JSONDecodeError):
+            raw_payload = json.loads(body)
+        except json.JSONDecodeError:
+            raise Problem(422, 'invalid_request', 'Provide a JSON name and a nonempty rows array') from None
+        if isinstance(raw_payload, list) or _is_revision_payload(raw_payload):
+            return await _import_revisions(request, response, body, user, name)
+        try:
+            payload = DatasetImport.model_validate(raw_payload)
+        except ValidationError:
             raise Problem(422, 'invalid_request', 'Provide a JSON name and a nonempty rows array') from None
         name, records = payload.name, payload.rows
     dataset, created = await run_in_threadpool(import_dataset, name, records, user.email)
